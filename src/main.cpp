@@ -1,3 +1,7 @@
+// Copyright (C) 2026 <Rodion Fedorov>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include <peglib.h>
 #include <functional>
 #include <ftxui/dom/node.hpp>

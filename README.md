@@ -8,3 +8,7 @@ To install NVim language server, add this to your lazy setup:
     lazy = false,
 }
 ```
+## License
+boook is free software licensed under the GNU General Public License, version 3 or later (GPL-3.0-or-later).
+You may use, study, modify, and redistribute the software under the terms of this license.
+See [LICENSE](LICENSE) for details.
