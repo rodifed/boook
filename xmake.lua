@@ -7,8 +7,6 @@ target("boook")
   set_languages("cxx17")
 
   add_files("src/*.cpp")
-  add_packages("ftxui", "nlohmann_json")
+  add_includedirs("include")
 
-  add_installfiles("grammar/book.peg", {
-    prefixdir = "share/boook"
-  })
+  add_packages("ftxui", "nlohmann_json")
