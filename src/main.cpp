@@ -469,8 +469,9 @@ int main() {
       | frame
       | flex
       | reflect(readerBox)
-      | border
-      | (!sidebarFocused ? color(Color::Cyan) : nothing);
+      | borderStyled(
+        !sidebarFocused ? Color(Color::Cyan) : Color(Color::Default)
+      );
 
     Element top;
 

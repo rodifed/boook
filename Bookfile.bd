@@ -1,0 +1,8 @@
+! Test Bookfile
+# About this file
+This is a test file to check if everything works
+[Bad link](file_that_doesnt_exist.bd)
+[Good link](check.bd)
+: Formatting
+: /italic/, *bold*
+/italic/, *bold*
