@@ -1,4 +1,6 @@
 #include <peglib.h>
+#include <functional>
+#include <ftxui/dom/node.hpp>
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <iostream>
@@ -29,6 +31,9 @@ Link       <- '[' LinkLabel ']' '(' LinkTarget ')'
 LinkLabel  <- (!']' !Newline .)+
 LinkTarget <- (!')' !Newline .)+
 
+Plain      <- (!'[' !'*' !'/' !'_' !Newline .)+
+           / '[' !Link .
+
 Bold       <- '*' BoldText '*'
 Italic     <- '/' ItalicText '/'
 Underline  <- '_' UnderlineText '_'
@@ -36,9 +41,6 @@ Underline  <- '_' UnderlineText '_'
 BoldText      <- (!'*' !Newline .)+
 ItalicText    <- (!'/' !Newline .)+
 UnderlineText <- (!'_' !Newline .)+
-
-Plain      <- (!'[' !'*' !'/' !'_' !Newline .)+
-           / '[' !('[' LinkLabel ']' '(' LinkTarget ')')
 
 End        <- Newline / !.
 Newline    <- '\r\n' / '\n'
@@ -203,10 +205,11 @@ Document parse_book(
   return document;
 }
 
-ftxui::Element renderSpan(const Span& span) {
+Element renderSpan(const Span& span, bool validLink = true) {
   auto e = text(span.text);
   if (!span.link.empty()) {
-    return e | underlined | color(Color::Blue);
+    return e | underlined |
+      color(validLink ? Color::Blue : Color::Red);
   }
 
   switch (span.style) {
@@ -217,11 +220,25 @@ ftxui::Element renderSpan(const Span& span) {
   }
 }
 
-Element renderBlock(const Block& block) {
+Element renderBlock(
+  const Block& block,
+  int selectedSpan,
+  const std::function<bool(const std::string&)>& isValidLink
+) {
   Elements spans;
 
-  for (const auto& span : block.spans) {
-    spans.push_back(renderSpan(span));
+  for (int i = 0; i < static_cast<int>(block.spans.size()); ++i) {
+    auto element = renderSpan(
+      block.spans[i],
+      block.spans[i].link.empty() ||
+        isValidLink(block.spans[i].link)
+    );
+
+    if (i == selectedSpan && !block.spans[i].link.empty()) {
+      element = element | inverted | bold;
+    }
+
+    spans.push_back(element);
   }
 
   auto line = hbox(std::move(spans));
@@ -279,8 +296,8 @@ int main() {
 
   int selectedFile = 0;
   int selectedChapter = 0;
-  int selectedLink = 0;
   int scroll = 0;
+  int activeLink = -1;
 
   bool pickerOpen = false;
   bool sidebarFocused = true;
@@ -341,29 +358,57 @@ int main() {
     openedFile = files[index];
     selectedChapter = 0;
     scroll = 0;
-    selectedLink = 0;
+    activeLink = -1;
   };
 
   auto getLinks = [&]() {
-    std::vector<std::string> links;
+    std::vector<std::pair<int, int>> links;
 
-    if (scroll < 0 || scroll >= static_cast<int>(document.size())) {
-      return links;
-    }
-
-    for (const auto& span : document[scroll].spans) {
-      if (!span.link.empty()) {
-        links.push_back(span.link);
+    for (int i = 0; i < static_cast<int>(document.size()); ++i) {
+      for (int j = 0; j < static_cast<int>(document[i].spans.size()); ++j) {
+        if (!document[i].spans[j].link.empty()) {
+          links.emplace_back(i, j);
+        }
       }
     }
 
     return links;
   };
 
+  auto resolveLink = [&](const std::string& target) {
+    namespace fs = std::filesystem;
+
+    return (
+        fs::path(openedFile).parent_path() / target
+        ).lexically_normal();
+  };
+
+  auto isValidLink = [&](const std::string& target) {
+    namespace fs = std::filesystem;
+
+    fs::path path = resolveLink(target);
+
+    if (!fs::is_regular_file(path)) {
+      return false;
+    }
+
+    for (const auto& file : files) {
+      if (fs::absolute(file).lexically_normal() ==
+          fs::absolute(path).lexically_normal()) {
+        return true;
+      }
+    }
+
+    return false;
+  };
+
   loadBook(0);
   updateFilter();
 
   auto screen = ScreenInteractive::Fullscreen();
+
+  std::vector<ftxui::Box> blockBoxes;
+  ftxui::Box readerBox;
 
   auto renderer = Renderer([&] {
     Elements chapterElements;
@@ -387,10 +432,26 @@ int main() {
       | border
       | (sidebarFocused ? color(Color::Cyan) : nothing);
 
+    blockBoxes.resize(document.size());
+
     Elements bookElements;
 
     for (int i = 0; i < static_cast<int>(document.size()); ++i) {
-      auto element = renderBlock(document[i]);
+      int selectedSpan = -1;
+
+      auto links = getLinks();
+
+      if (activeLink >= 0 &&
+          activeLink < static_cast<int>(links.size()) &&
+          links[activeLink].first == i) {
+        selectedSpan = links[activeLink].second;
+      }
+
+      auto element = renderBlock(
+        document[i],
+        selectedSpan,
+        isValidLink
+      ) | reflect(blockBoxes[i]);
 
       if (i == scroll) {
         element = element | focus;
@@ -403,6 +464,7 @@ int main() {
       | vscroll_indicator
       | frame
       | flex
+      | reflect(readerBox)
       | border
       | (!sidebarFocused ? color(Color::Cyan) : nothing);
 
@@ -438,6 +500,13 @@ int main() {
         text(openedFile),
         text("  [/] Search files") | dim
       }) | border;
+    }
+
+    auto links = getLinks();
+
+    if (activeLink >= 0 &&
+        activeLink < static_cast<int>(links.size())) {
+      auto [blockIndex, spanIndex] = links[activeLink];
     }
 
     return vbox({
@@ -530,9 +599,31 @@ int main() {
 
     if (!sidebarFocused && event == Event::Tab) {
       auto links = getLinks();
+      std::vector<int> visibleLinks;
 
-      if (!links.empty()) {
-        selectedLink = (selectedLink + 1) % links.size();
+      for (int i = 0; i < static_cast<int>(links.size()); ++i) {
+        int blockIndex = links[i].first;
+
+        const auto& box = blockBoxes[blockIndex];
+
+        if (box.y_max >= readerBox.y_min &&
+            box.y_min <= readerBox.y_max) {
+          visibleLinks.push_back(i);
+        }
+      }
+
+      if (!visibleLinks.empty()) {
+        auto it = std::find(
+            visibleLinks.begin(),
+            visibleLinks.end(),
+            activeLink
+            );
+
+        if (it == visibleLinks.end() || ++it == visibleLinks.end()) {
+          activeLink = visibleLinks.front();
+        } else {
+          activeLink = *it;
+        }
       }
 
       return true;
@@ -541,25 +632,38 @@ int main() {
     if (!sidebarFocused && event == Event::Return) {
       auto links = getLinks();
 
-      if (!links.empty()) {
-        auto target = links[selectedLink];
-
-        std::filesystem::path path =
-          std::filesystem::path(openedFile).parent_path() / target;
-
-        path = path.lexically_normal();
-
-        auto it = std::find(files.begin(), files.end(), path.string());
-
-        if (it == files.end()) {
-          files.push_back(path.string());
-          loadBook(static_cast<int>(files.size()) - 1);
-        } else {
-          loadBook(static_cast<int>(it - files.begin()));
-        }
-
-        updateFilter();
+      if (activeLink < 0 ||
+          activeLink >= static_cast<int>(links.size())) {
+        return true;
       }
+
+      auto [blockIndex, spanIndex] = links[activeLink];
+
+      std::string target =
+        document[blockIndex].spans[spanIndex].link;
+      if (!isValidLink(target)) {
+        return true;
+      }
+
+      namespace fs = std::filesystem;
+
+      std::filesystem::path path = resolveLink(target);
+
+      auto it = std::find_if(
+          files.begin(),
+          files.end(),
+          [&](const std::string& file) {
+          return fs::absolute(file).lexically_normal() ==
+          fs::absolute(path).lexically_normal();
+          }
+          );
+
+      if (it != files.end()) {
+        loadBook(static_cast<int>(it - files.begin()));
+      }
+
+      activeLink = -1;
+      updateFilter();
 
       return true;
     }
