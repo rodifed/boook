@@ -1,3 +1,4 @@
+
 add_rules("mode.debug", "mode.release")
 
 add_requires("pkgconfig::ftxui-component", {

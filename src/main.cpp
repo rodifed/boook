@@ -23,7 +23,11 @@ Section    <- ': ' Text End
 Paragraph  <- Text End
 Blank      <- Newline
 
-Text       <- (Bold / Italic / Underline / Plain)+
+Text       <- (Link / Bold / Italic / Underline / Plain)+
+
+Link       <- '[' LinkLabel ']' '(' LinkTarget ')'
+LinkLabel  <- (!']' !Newline .)+
+LinkTarget <- (!')' !Newline .)+
 
 Bold       <- '*' BoldText '*'
 Italic     <- '/' ItalicText '/'
@@ -33,7 +37,8 @@ BoldText      <- (!'*' !Newline .)+
 ItalicText    <- (!'/' !Newline .)+
 UnderlineText <- (!'_' !Newline .)+
 
-Plain      <- (!'*' !'/' !'_' !Newline .)+
+Plain      <- (!'[' !'*' !'/' !'_' !Newline .)+
+           / '[' !('[' LinkLabel ']' '(' LinkTarget ')')
 
 End        <- Newline / !.
 Newline    <- '\r\n' / '\n'
@@ -49,6 +54,7 @@ enum class Style {
 struct Span {
   std::string text;
   Style style;
+  std::string link = "";
 };
 
 enum class BlockType {
@@ -123,6 +129,21 @@ Document parse_book(
     return Span{s.substr(1, s.size() - 2), Style::Underline};
   };
 
+  parser["Link"] = [](const peg::SemanticValues& sv) {
+    auto label = std::any_cast<std::string>(sv[0]);
+    auto target = std::any_cast<std::string>(sv[1]);
+
+    return Span{label, Style::Underline, target};
+  };
+
+  parser["LinkLabel"] = [](const peg::SemanticValues& sv) {
+    return sv.token_to_string();
+  };
+
+  parser["LinkTarget"] = [](const peg::SemanticValues& sv) {
+    return sv.token_to_string();
+  };
+
   parser["Text"] = [](const peg::SemanticValues& sv) {
     std::vector<Span> spans;
 
@@ -184,6 +205,9 @@ Document parse_book(
 
 ftxui::Element renderSpan(const Span& span) {
   auto e = text(span.text);
+  if (!span.link.empty()) {
+    return e | underlined | color(Color::Blue);
+  }
 
   switch (span.style) {
     case Style::Bold:      return e | bold;
@@ -255,6 +279,7 @@ int main() {
 
   int selectedFile = 0;
   int selectedChapter = 0;
+  int selectedLink = 0;
   int scroll = 0;
 
   bool pickerOpen = false;
@@ -316,6 +341,23 @@ int main() {
     openedFile = files[index];
     selectedChapter = 0;
     scroll = 0;
+    selectedLink = 0;
+  };
+
+  auto getLinks = [&]() {
+    std::vector<std::string> links;
+
+    if (scroll < 0 || scroll >= static_cast<int>(document.size())) {
+      return links;
+    }
+
+    for (const auto& span : document[scroll].spans) {
+      if (!span.link.empty()) {
+        links.push_back(span.link);
+      }
+    }
+
+    return links;
   };
 
   loadBook(0);
@@ -410,7 +452,7 @@ int main() {
       text(
         pickerOpen
           ? "Type to search | Up/Down Select | Enter Open | Esc Cancel"
-          : "Left/Right Switch | Up/Down Navigate | / Files | Q Quit"
+          : "Left/Right Focus | Up/Down Navigate | Tab Links | Enter Open | / Files | Q Quit"
       ) | dim | center
     }) | flex;
   });
@@ -483,6 +525,42 @@ int main() {
 
     if (event == Event::ArrowRight) {
       sidebarFocused = false;
+      return true;
+    }
+
+    if (!sidebarFocused && event == Event::Tab) {
+      auto links = getLinks();
+
+      if (!links.empty()) {
+        selectedLink = (selectedLink + 1) % links.size();
+      }
+
+      return true;
+    }
+
+    if (!sidebarFocused && event == Event::Return) {
+      auto links = getLinks();
+
+      if (!links.empty()) {
+        auto target = links[selectedLink];
+
+        std::filesystem::path path =
+          std::filesystem::path(openedFile).parent_path() / target;
+
+        path = path.lexically_normal();
+
+        auto it = std::find(files.begin(), files.end(), path.string());
+
+        if (it == files.end()) {
+          files.push_back(path.string());
+          loadBook(static_cast<int>(files.size()) - 1);
+        } else {
+          loadBook(static_cast<int>(it - files.begin()));
+        }
+
+        updateFilter();
+      }
+
       return true;
     }
 
