@@ -264,7 +264,86 @@ Element renderBlock(
   return line;
 }
 
+std::string ToMarkdown(const Span& span) {
+  if (!span.link.empty()) {
+    return "[" + span.text + "](" + span.link + ")";
+  }
 
+  switch (span.style) {
+    case Style::Bold:
+      return "**" + span.text + "**";
+
+    case Style::Italic:
+      return "*" + span.text + "*";
+
+    case Style::Underline:
+      return "<u>" + span.text + "</u>";
+
+    default:
+      return span.text;
+  }
+}
+
+std::string ToMarkdown(const std::vector<Span>& spans) {
+  std::string result;
+
+  for (const auto& span : spans) {
+    result += ToMarkdown(span);
+  }
+
+  return result;
+}
+
+std::string ExportMarkdown(const Document& document) {
+  std::string result;
+
+  for (const auto& block : document) {
+    switch (block.type) {
+      case BlockType::Heading:
+        result += "# ";
+        break;
+
+      case BlockType::Section:
+        result += "## ";
+        break;
+
+      case BlockType::Filename:
+        result += "### ";
+        break;
+
+      case BlockType::Paragraph:
+        break;
+    }
+
+    result += ToMarkdown(block.spans);
+    result += "\n\n";
+  }
+
+  return result;
+}
+
+std::string BDToMarkdown(const std::string& filename) {
+  Document document = parse_book(
+    read_file(filename),
+    grammar
+  );
+
+  return ExportMarkdown(document);
+}
+
+bool SaveMarkdown(
+  const std::string& input,
+  const std::string& output
+) {
+  std::ofstream file(output);
+
+  if (!file)
+    return false;
+
+  file << BDToMarkdown(input);
+
+  return file.good();
+}
 
 int main() {
   auto config = json::parse(read_file("config.json"));
@@ -408,6 +487,8 @@ int main() {
 
   loadBook(0);
   updateFilter();
+  for (auto& f : files)
+    std::cout << SaveMarkdown(f, "markdown/"+ f + ".md");
 
   auto screen = ScreenInteractive::Fullscreen();
 
