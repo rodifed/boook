@@ -487,8 +487,21 @@ int main() {
 
   loadBook(0);
   updateFilter();
-  for (auto& f : files)
-    std::cout << SaveMarkdown(f, "markdown/"+ f + ".md");
+  namespace fs = std::filesystem;
+  for (const auto& f : files) {
+    fs::path input(f);
+    fs::path output = fs::path("markdown") / input;
+
+    output.replace_extension(".md");
+
+    fs::create_directories(output.parent_path());
+
+    if (SaveMarkdown(f, output.string())) {
+      std::cout << "Exported: " << output << '\n';
+    } else {
+      std::cerr << "Failed: " << f << '\n';
+    }
+  }
 
   auto screen = ScreenInteractive::Fullscreen();
 
